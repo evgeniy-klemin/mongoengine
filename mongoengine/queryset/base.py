@@ -671,8 +671,8 @@ class BaseQuerySet(object):
                 '%s is not a subclass of BaseQuerySet' % cls.__name__)
 
         copy_props = ('_mongo_query', '_initial_query', '_none', '_query_obj',
-                      '_where_clause', '_loaded_fields', '_ordering',
-                      '_timeout', '_class_check', '_slave_okay', '_read_preference',
+                      '_where_clause', '_loaded_fields', '_ordering', '_no_cursor_timeout',
+                      '_class_check', '_slave_okay', '_read_preference',
                       '_iter', '_scalar', '_as_pymongo', '_as_pymongo_coerce',
                       '_limit', '_skip', '_hint', '_auto_dereference',
                       '_search_text', 'only_fields', '_max_time_ms')
@@ -906,15 +906,15 @@ class BaseQuerySet(object):
             plan = pprint.pformat(plan)
         return plan
 
-    def timeout(self, enabled):
-        """Enable or disable the default mongod timeout when querying.
+    def no_cursor_timeout(self, enabled):
+        """Enable or disable the default mongod no_cursor_timeout when querying.
 
-        :param enabled: whether or not the timeout is used
+        :param enabled: whether or not the no_cursor_timeout is used
 
         ..versionchanged:: 0.5 - made chainable
         """
         queryset = self.clone()
-        queryset._timeout = enabled
+        queryset._no_cursor_timeout = enabled
         return queryset
 
     def slave_okay(self, enabled):

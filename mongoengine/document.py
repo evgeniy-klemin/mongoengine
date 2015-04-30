@@ -552,7 +552,8 @@ class Document(BaseDocument):
         index_cls = cls._meta.get('index_cls', True)
 
         collection = cls._get_collection()
-        if collection.read_preference > 1:
+        if (collection.read_preference != ReadPreference.PRIMARY or
+                collection.read_preference != ReadPreference.PRIMARY_PREFERRED):
             return
 
         # determine if an index which we are creating includes

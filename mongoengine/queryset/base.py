@@ -55,8 +55,7 @@ class BaseQuerySet(object):
         self._where_clause = None
         self._loaded_fields = QueryFieldList()
         self._ordering = None
-        self._snapshot = False
-        self._timeout = True
+        self._no_cursor_timeout = False
         self._class_check = True
         self._slave_okay = False
         self._read_preference = None
@@ -672,7 +671,7 @@ class BaseQuerySet(object):
                 '%s is not a subclass of BaseQuerySet' % cls.__name__)
 
         copy_props = ('_mongo_query', '_initial_query', '_none', '_query_obj',
-                      '_where_clause', '_loaded_fields', '_ordering', '_snapshot',
+                      '_where_clause', '_loaded_fields', '_ordering',
                       '_timeout', '_class_check', '_slave_okay', '_read_preference',
                       '_iter', '_scalar', '_as_pymongo', '_as_pymongo_coerce',
                       '_limit', '_skip', '_hint', '_auto_dereference',
@@ -906,17 +905,6 @@ class BaseQuerySet(object):
         if format:
             plan = pprint.pformat(plan)
         return plan
-
-    def snapshot(self, enabled):
-        """Enable or disable snapshot mode when querying.
-
-        :param enabled: whether or not snapshot mode is enabled
-
-        ..versionchanged:: 0.5 - made chainable
-        """
-        queryset = self.clone()
-        queryset._snapshot = enabled
-        return queryset
 
     def timeout(self, enabled):
         """Enable or disable the default mongod timeout when querying.
@@ -1384,8 +1372,7 @@ class BaseQuerySet(object):
     @property
     def _cursor_args(self):
         cursor_args = {
-            'snapshot': self._snapshot,
-            'timeout': self._timeout
+            'no_cursor_timeout': self._no_cursor_timeout
         }
         if self._read_preference is not None:
             cursor_args['read_preference'] = self._read_preference

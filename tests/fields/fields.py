@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 import sys
+from nose.plugins.skip import SkipTest
+
 sys.path[0:0] = [""]
 
 import datetime
@@ -37,6 +39,7 @@ class FieldTest(unittest.TestCase):
     def tearDown(self):
         self.db.drop_collection('fs.files')
         self.db.drop_collection('fs.chunks')
+        self.db.drop_collection('mongoengine.counters')
 
     def test_default_values_nothing_set(self):
         """Ensure that default field values are used when creating a document.
@@ -338,6 +341,23 @@ class FieldTest(unittest.TestCase):
 
         link.url = 'http://www.google.com:8080'
         link.validate()
+
+    def test_url_scheme_validation(self):
+        """Ensure that URLFields validate urls with specific schemes properly.
+        """
+        class Link(Document):
+            url = URLField()
+
+        class SchemeLink(Document):
+            url = URLField(schemes=['ws', 'irc'])
+
+        link = Link()
+        link.url = 'ws://google.com'
+        self.assertRaises(ValidationError, link.validate)
+
+        scheme_link = SchemeLink()
+        scheme_link.url = 'ws://google.com'
+        scheme_link.validate()
 
     def test_int_validation(self):
         """Ensure that invalid values cannot be assigned to int fields.
@@ -916,10 +936,17 @@ class FieldTest(unittest.TestCase):
         self.assertEqual(post.comments[0].content, comment2.content)
         self.assertEqual(post.comments[1].content, comment1.content)
 
+        post.comments[0].order = 2
+        post.save()
+        post.reload()
+
+        self.assertEqual(post.comments[0].content, comment1.content)
+        self.assertEqual(post.comments[1].content, comment2.content)
+
         BlogPost.drop_collection()
 
     def test_reverse_list_sorting(self):
-        '''Ensure that a reverse sorted list field properly sorts values'''
+        """Ensure that a reverse sorted list field properly sorts values"""
 
         class Category(EmbeddedDocument):
             count = IntField()
@@ -1307,7 +1334,6 @@ class FieldTest(unittest.TestCase):
     def test_atomic_update_dict_field(self):
         """Ensure that the entire DictField can be atomically updated."""
 
-
         class Simple(Document):
             mapping = DictField(field=ListField(IntField(required=True)))
 
@@ -1322,7 +1348,7 @@ class FieldTest(unittest.TestCase):
         self.assertEqual({"ints": [3, 4]}, e.mapping)
 
         def create_invalid_mapping():
-            e.update(set__mapping={"somestrings": ["foo", "bar",]})
+            e.update(set__mapping={"somestrings": ["foo", "bar", ]})
 
         self.assertRaises(ValueError, create_invalid_mapping)
 
@@ -1431,15 +1457,25 @@ class FieldTest(unittest.TestCase):
     def test_map_field_lookup(self):
         """Ensure MapField lookups succeed on Fields without a lookup method"""
 
+        class Action(EmbeddedDocument):
+            operation = StringField()
+            object = StringField()
+
         class Log(Document):
             name = StringField()
             visited = MapField(DateTimeField())
+            actions = MapField(EmbeddedDocumentField(Action))
 
         Log.drop_collection()
-        Log(name="wilson", visited={'friends': datetime.datetime.now()}).save()
+        Log(name="wilson", visited={'friends': datetime.datetime.now()},
+            actions={'friends': Action(operation='drink', object='beer')}).save()
 
         self.assertEqual(1, Log.objects(
             visited__friends__exists=True).count())
+
+        self.assertEqual(1, Log.objects(
+            actions__friends__operation='drink',
+            actions__friends__object='beer').count())
 
     def test_embedded_db_field(self):
 
@@ -1581,6 +1617,27 @@ class FieldTest(unittest.TestCase):
                                'parent': "50a234ea469ac1eda42d347d"})
         mongoed = p1.to_mongo()
         self.assertTrue(isinstance(mongoed['parent'], ObjectId))
+        
+    def test_cached_reference_field_get_and_save(self):
+        """
+        Tests #1047: CachedReferenceField creates DBRefs on to_python, but can't save them on to_mongo
+        """
+        class Animal(Document):
+            name = StringField()
+            tag = StringField()
+
+        class Ocorrence(Document):
+            person = StringField()
+            animal = CachedReferenceField(Animal)
+        
+        Animal.drop_collection()
+        Ocorrence.drop_collection()
+        
+        Ocorrence(person="testte", 
+                  animal=Animal(name="Leopard", tag="heavy").save()).save()
+        p = Ocorrence.objects.get()
+        p.person = 'new_testte'
+        p.save()
 
     def test_cached_reference_fields(self):
         class Animal(Document):
@@ -2115,9 +2172,7 @@ class FieldTest(unittest.TestCase):
         obj = Product.objects(company=None).first()
         self.assertEqual(obj, me)
 
-        obj, created = Product.objects.get_or_create(company=None)
-
-        self.assertEqual(created, False)
+        obj = Product.objects.get(company=None)
         self.assertEqual(obj, me)
 
     def test_reference_query_conversion(self):
@@ -2341,6 +2396,62 @@ class FieldTest(unittest.TestCase):
         bm = Bookmark.objects.first()
         self.assertEqual(bm.bookmark_object, post_1)
 
+    def test_generic_reference_string_choices(self):
+        """Ensure that a GenericReferenceField can handle choices as strings
+        """
+        class Link(Document):
+            title = StringField()
+
+        class Post(Document):
+            title = StringField()
+
+        class Bookmark(Document):
+            bookmark_object = GenericReferenceField(choices=('Post', Link))
+
+        Link.drop_collection()
+        Post.drop_collection()
+        Bookmark.drop_collection()
+
+        link_1 = Link(title="Pitchfork")
+        link_1.save()
+
+        post_1 = Post(title="Behind the Scenes of the Pavement Reunion")
+        post_1.save()
+
+        bm = Bookmark(bookmark_object=link_1)
+        bm.save()
+
+        bm = Bookmark(bookmark_object=post_1)
+        bm.save()
+
+        bm = Bookmark(bookmark_object=bm)
+        self.assertRaises(ValidationError, bm.validate)
+
+    def test_generic_reference_choices_no_dereference(self):
+        """Ensure that a GenericReferenceField can handle choices on
+        non-derefenreced (i.e. DBRef) elements
+        """
+        class Post(Document):
+            title = StringField()
+
+        class Bookmark(Document):
+            bookmark_object = GenericReferenceField(choices=(Post, ))
+            other_field = StringField()
+
+        Post.drop_collection()
+        Bookmark.drop_collection()
+
+        post_1 = Post(title="Behind the Scenes of the Pavement Reunion")
+        post_1.save()
+
+        bm = Bookmark(bookmark_object=post_1)
+        bm.save()
+
+        bm = Bookmark.objects.get(id=bm.id)
+        # bookmark_object is now a DBRef
+        bm.other_field = 'dummy_change'
+        bm.save()
+
     def test_generic_reference_list_choices(self):
         """Ensure that a ListField properly dereferences generic references and
         respects choices.
@@ -2471,10 +2582,29 @@ class FieldTest(unittest.TestCase):
             id = BinaryField(primary_key=True)
 
         Attachment.drop_collection()
-
-        att = Attachment(id=uuid.uuid4().bytes).save()
+        binary_id = uuid.uuid4().bytes
+        att = Attachment(id=binary_id).save()
+        self.assertEqual(1, Attachment.objects.count())
+        self.assertEqual(1, Attachment.objects.filter(id=att.id).count())
+        # TODO use assertIsNotNone once Python 2.6 support is dropped
+        self.assertTrue(Attachment.objects.filter(id=att.id).first() is not None)
         att.delete()
+        self.assertEqual(0, Attachment.objects.count())
 
+    def test_binary_field_primary_filter_by_binary_pk_as_str(self):
+
+        raise SkipTest("Querying by id as string is not currently supported")
+
+        class Attachment(Document):
+            id = BinaryField(primary_key=True)
+
+        Attachment.drop_collection()
+        binary_id = uuid.uuid4().bytes
+        att = Attachment(id=binary_id).save()
+        self.assertEqual(1, Attachment.objects.filter(id=binary_id).count())
+        # TODO use assertIsNotNone once Python 2.6 support is dropped
+        self.assertTrue(Attachment.objects.filter(id=binary_id).first() is not None)
+        att.delete()
         self.assertEqual(0, Attachment.objects.count())
 
     def test_choices_validation(self):
@@ -2916,6 +3046,57 @@ class FieldTest(unittest.TestCase):
         self.assertEqual(1, post.comments[0].id)
         self.assertEqual(2, post.comments[1].id)
 
+    def test_inherited_sequencefield(self):
+        class Base(Document):
+            name = StringField()
+            counter = SequenceField()
+            meta = {'abstract': True}
+
+        class Foo(Base):
+            pass
+
+        class Bar(Base):
+            pass
+
+        bar = Bar(name='Bar')
+        bar.save()
+
+        foo = Foo(name='Foo')
+        foo.save()
+
+        self.assertTrue('base.counter' in
+                        self.db['mongoengine.counters'].find().distinct('_id'))
+        self.assertFalse(('foo.counter' or 'bar.counter') in
+                         self.db['mongoengine.counters'].find().distinct('_id'))
+        self.assertNotEqual(foo.counter, bar.counter)
+        self.assertEqual(foo._fields['counter'].owner_document, Base)
+        self.assertEqual(bar._fields['counter'].owner_document, Base)
+
+    def test_no_inherited_sequencefield(self):
+        class Base(Document):
+            name = StringField()
+            meta = {'abstract': True}
+
+        class Foo(Base):
+            counter = SequenceField()
+
+        class Bar(Base):
+            counter = SequenceField()
+
+        bar = Bar(name='Bar')
+        bar.save()
+
+        foo = Foo(name='Foo')
+        foo.save()
+
+        self.assertFalse('base.counter' in
+                         self.db['mongoengine.counters'].find().distinct('_id'))
+        self.assertTrue(('foo.counter' and 'bar.counter') in
+                         self.db['mongoengine.counters'].find().distinct('_id'))
+        self.assertEqual(foo.counter, bar.counter)
+        self.assertEqual(foo._fields['counter'].owner_document, Foo)
+        self.assertEqual(bar._fields['counter'].owner_document, Bar)
+
     def test_generic_embedded_document(self):
         class Car(EmbeddedDocument):
             name = StringField()
@@ -3050,7 +3231,6 @@ class FieldTest(unittest.TestCase):
         self.assertTrue(user.validate() is None)
 
         user = User(email=("Kofq@rhom0e4klgauOhpbpNdogawnyIKvQS0wk2mjqrgGQ5S"
-                           "ucictfqpdkK9iS1zeFw8sg7s7cwAF7suIfUfeyueLpfosjn3"
                            "aJIazqqWkm7.net"))
         self.assertTrue(user.validate() is None)
 
@@ -3658,6 +3838,30 @@ class EmbeddedDocumentListFieldTestCase(unittest.TestCase):
         # deleted from the database
         self.assertEqual(number, 2)
 
+    def test_empty_list_embedded_documents_with_unique_field(self):
+        """
+        Tests that only one document with an empty list of embedded documents
+        that have a unique field can be saved, but if the unique field is
+        also sparse than multiple documents with an empty list can be saved.
+        """
+        class EmbeddedWithUnique(EmbeddedDocument):
+            number = IntField(unique=True)
+
+        class A(Document):
+            my_list = ListField(EmbeddedDocumentField(EmbeddedWithUnique))
+
+        A(my_list=[]).save()
+        self.assertRaises(NotUniqueError, lambda: A(my_list=[]).save())
+
+        class EmbeddedWithSparseUnique(EmbeddedDocument):
+            number = IntField(unique=True, sparse=True)
+
+        class B(Document):
+            my_list = ListField(EmbeddedDocumentField(EmbeddedWithSparseUnique))
+
+        B(my_list=[]).save()
+        B(my_list=[]).save()
+
     def test_filtered_delete(self):
         """
         Tests the delete method of a List of Embedded Documents
@@ -3688,6 +3892,24 @@ class EmbeddedDocumentListFieldTestCase(unittest.TestCase):
         # Ensure that the delete method returned 1 as the number of entries
         # deleted from the database
         self.assertEqual(number, 1)
+
+    def test_custom_data(self):
+        """
+        Tests that custom data is saved in the field object
+        and doesn't interfere with the rest of field functionalities.
+        """
+        custom_data = {'a': 'a_value', 'b': [1, 2]}
+
+        class CustomData(Document):
+            a_field = IntField()
+            c_field = IntField(custom_data=custom_data)
+
+        a1 = CustomData(a_field=1, c_field=2).save()
+        self.assertEqual(2, a1.c_field)
+        self.assertFalse(hasattr(a1.c_field, 'custom_data'))
+        self.assertTrue(hasattr(CustomData.c_field, 'custom_data'))
+        self.assertEqual(custom_data['a'], CustomData.c_field.custom_data['a'])
+
 
 if __name__ == '__main__':
     unittest.main()

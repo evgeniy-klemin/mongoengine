@@ -1,11 +1,16 @@
-from pymongo import MongoClient, MongoReplicaSetClient, uri_parser
-
+from pymongo import MongoClient, ReadPreference, uri_parser
+from mongoengine.python_support import IS_PYMONGO_3
 
 __all__ = ['ConnectionError', 'connect', 'register_connection',
            'DEFAULT_CONNECTION_NAME']
 
 
 DEFAULT_CONNECTION_NAME = 'default'
+if IS_PYMONGO_3:
+    READ_PREFERENCE = ReadPreference.PRIMARY
+else:
+    from pymongo import MongoReplicaSetClient
+    READ_PREFERENCE = False
 
 
 class ConnectionError(Exception):
@@ -18,7 +23,7 @@ _dbs = {}
 
 
 def register_connection(alias, name=None, host=None, port=None,
-                        read_preference=False,
+                        read_preference=READ_PREFERENCE,
                         username=None, password=None, authentication_source=None,
                         **kwargs):
     """Add a connection.
@@ -76,7 +81,7 @@ def disconnect(alias=DEFAULT_CONNECTION_NAME):
     global _dbs
 
     if alias in _connections:
-        get_connection(alias=alias).disconnect()
+        get_connection(alias=alias).close()
         del _connections[alias]
     if alias in _dbs:
         del _dbs[alias]
@@ -103,18 +108,20 @@ def get_connection(alias=DEFAULT_CONNECTION_NAME, reconnect=False):
 
         connection_class = MongoClient
         if 'replicaSet' in conn_settings:
-            conn_settings['hosts_or_uri'] = conn_settings.pop('host', None)
             # Discard port since it can't be used on MongoReplicaSetClient
             conn_settings.pop('port', None)
             # Discard replicaSet if not base string
             if not isinstance(conn_settings['replicaSet'], basestring):
                 conn_settings.pop('replicaSet', None)
-            connection_class = MongoReplicaSetClient
+            if not IS_PYMONGO_3:
+                connection_class = MongoReplicaSetClient
+                conn_settings['hosts_or_uri'] = conn_settings.pop('host', None)
 
         try:
             connection = None
             # check for shared connections
-            connection_settings_iterator = ((db_alias, settings.copy()) for db_alias, settings in _connection_settings.iteritems())
+            connection_settings_iterator = (
+                (db_alias, settings.copy()) for db_alias, settings in _connection_settings.iteritems())
             for db_alias, connection_settings in connection_settings_iterator:
                 connection_settings.pop('name', None)
                 connection_settings.pop('username', None)

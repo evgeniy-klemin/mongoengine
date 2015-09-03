@@ -72,7 +72,7 @@ class DynamicTest(unittest.TestCase):
         obj = collection.find_one()
         self.assertEqual(sorted(obj.keys()), ['_cls', '_id', 'misc', 'name'])
 
-        del(p.misc)
+        del p.misc
         p.save()
 
         p = self.Person.objects.get()
@@ -87,6 +87,18 @@ class DynamicTest(unittest.TestCase):
         p.save()
         p.update(unset__misc=1)
         p.reload()
+
+    def test_reload_dynamic_field(self):
+        self.Person.objects.delete()
+        p = self.Person.objects.create()
+        p.update(age=1)
+
+        self.assertEqual(len(p._data), 3)
+        self.assertEqual(sorted(p._data.keys()), ['_cls', 'id', 'name'])
+
+        p.reload()
+        self.assertEqual(len(p._data), 4)
+        self.assertEqual(sorted(p._data.keys()), ['_cls', 'age', 'id', 'name'])
 
     def test_dynamic_document_queries(self):
         """Ensure we can query dynamic fields"""
@@ -128,6 +140,15 @@ class DynamicTest(unittest.TestCase):
         p.save()
 
         self.assertEqual(1, self.Person.objects(misc__hello='world').count())
+
+    def test_three_level_complex_data_lookups(self):
+        """Ensure you can query three level document dynamic fields"""
+        p = self.Person()
+        p.misc = {'hello': {'hello2': 'world'}}
+        p.save()
+        # from pprint import pprint as pp; import pdb; pdb.set_trace();
+        print self.Person.objects(misc__hello__hello2='world')
+        self.assertEqual(1, self.Person.objects(misc__hello__hello2='world').count())
 
     def test_complex_embedded_document_validation(self):
         """Ensure embedded dynamic documents may be validated"""
@@ -331,7 +352,7 @@ class DynamicTest(unittest.TestCase):
         person = Person.objects.first()
         person.attrval = "This works"
 
-        person["phone"] = "555-1212" # but this should too
+        person["phone"] = "555-1212"  # but this should too
 
         # Same thing two levels deep
         person["address"]["city"] = "Lundenne"
@@ -346,7 +367,6 @@ class DynamicTest(unittest.TestCase):
         person.save()
 
         self.assertEqual(Person.objects.first().address.city, "Londinium")
-
 
         person = Person.objects.first()
         person["age"] = 35
